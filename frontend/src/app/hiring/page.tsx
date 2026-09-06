@@ -4,7 +4,85 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { listJobs, type Job } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
-import { Button, StatRow, MonumentalStat, ServerUnreachableNotice, isBackendUnreachable } from "@/components/ui";
+import { StatRow, MonumentalStat, ServerUnreachableNotice, isBackendUnreachable } from "@/components/ui";
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduced(query.matches);
+    const handler = () => setReduced(query.matches);
+    query.addEventListener("change", handler);
+    return () => query.removeEventListener("change", handler);
+  }, []);
+  return reduced;
+}
+
+function MonumentalNewJobLink() {
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const ease = "cubic-bezier(0.16, 1, 0.3, 1)"; // exponential ease-out, no overshoot
+
+  return (
+    <Link href="/hiring/new">
+      <button
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => {
+          setHovered(false);
+          setPressed(false);
+        }}
+        onMouseDown={() => setPressed(true)}
+        onMouseUp={() => setPressed(false)}
+        style={{
+          display: "flex",
+          alignItems: "stretch",
+          padding: 0,
+          border: `1px solid ${hovered ? "var(--accent-strong)" : "var(--accent)"}`,
+          background: "var(--bg-elevated)",
+          cursor: "pointer",
+          borderRadius: "var(--radius-sm)",
+          transform: !reducedMotion && pressed ? "scale(0.97)" : "scale(1)",
+          transition: reducedMotion ? "none" : `transform 180ms ${ease}, border-color 180ms ease-out`,
+        }}
+      >
+        <span
+          style={{
+            width: 38,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: hovered ? "var(--accent-strong)" : "var(--accent)",
+            color: "#fff",
+            fontSize: 19,
+            fontWeight: 700,
+            lineHeight: 1,
+            transform: !reducedMotion && hovered ? "scale(1.25)" : "scale(1)",
+            transition: reducedMotion ? "none" : `transform 240ms ${ease}, background-color 180ms ease-out`,
+          }}
+        >
+          +
+        </span>
+        <span
+          className="mono"
+          style={{
+            padding: "0 16px",
+            display: "flex",
+            alignItems: "center",
+            fontSize: 11.5,
+            fontWeight: 650,
+            letterSpacing: "0.07em",
+            textTransform: "uppercase",
+            color: "var(--text)",
+            borderLeft: "1px solid var(--border-strong)",
+          }}
+        >
+          New job
+        </span>
+      </button>
+    </Link>
+  );
+}
 
 export default function HiringPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -29,9 +107,7 @@ export default function HiringPage() {
             Paste a job description to auto-generate a screening agent and start calling candidates.
           </p>
         </div>
-        <Link href="/hiring/new">
-          <Button>New job</Button>
-        </Link>
+        <MonumentalNewJobLink />
       </header>
 
       {error && unreachable && <ServerUnreachableNotice />}

@@ -30,7 +30,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="construction-grid app-main">{children}</main>
         </div>
         <ToastHost />
-      </body>
+      {/* impeccable-live-start */}
+<script src="http://localhost:8400/live.js?token=835d1e89-4b84-4066-8511-575ba41ad388"></script>
+{/* impeccable-live-end */}
+</body>
     </html>
   );
 }

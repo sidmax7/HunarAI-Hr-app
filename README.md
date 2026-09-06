@@ -25,18 +25,9 @@ Three traditionally manual, phone-heavy HR workflows, automated end to end:
 
 The mechanism a competitor can't casually copy: attendance that needs no employee action and no app — the phone network confirms presence, and a real AI phone call only happens when that silent check fails. Every module ends in a real, structured outcome an HR user reads as data (interest level, notice period, attendance status) — not audio they have to listen back to.
 
-<p align="center">
-  <img src="docs/screenshots/hiring.png" width="49%" alt="Hiring dashboard" />
-  <img src="docs/screenshots/attendance.png" width="49%" alt="Attendance dashboard" />
-</p>
-
 ## How it looks
 
 The UI runs its own design system — **"the gridded specimen sheet"** — a literal, visible construction grid instead of the usual rounded-card SaaS dashboard look: square corners everywhere, one indigo accent per screen, and pending states rendered as deliberate dashed "ghost cells" rather than blank space, so nothing that hasn't happened yet looks broken.
-
-<p align="center">
-  <img src="docs/screenshots/job-detail.png" width="80%" alt="Job detail view showing candidate table, call status, and guardrail-window messaging" />
-</p>
 
 ## Architecture
 
