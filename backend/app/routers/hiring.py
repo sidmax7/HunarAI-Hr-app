@@ -1,9 +1,10 @@
 import csv
 import io
+from collections.abc import Iterable
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -12,10 +13,16 @@ from app.models.candidate import Candidate, CandidateSource
 from app.models.interview import Interview
 from app.models.job import Job, JobStatus
 from app.models.base import new_uuid
+from app.services.calling_window import calling_window_label, is_within_calling_window
 from app.services.hunar_client import HunarAPIError, hunar_client
 from app.services.llm_service import llm_service
 
 router = APIRouter(prefix="/api", tags=["hiring"])
+
+# Interview.status values (set from Hunar's own call-status enum, see webhooks.py) that
+# mean a call is still pending or in flight for a candidate — used to stop the same
+# candidate being dialed twice from an accidental double-click or re-selection.
+_ACTIVE_INTERVIEW_STATUSES = {"SCHEDULED", "IN_PROGRESS", "RINGING", "QUEUED"}
 
 
 class CreateJobRequest(BaseModel):
@@ -72,21 +79,25 @@ async def list_jobs(db: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await db.execute(select(Job).order_by(Job.created_at.desc()))
     jobs = result.scalars().all()
 
-    output = []
-    for job in jobs:
-        candidate_count_result = await db.execute(
-            select(Interview).where(Interview.job_id == job.id)
-        )
-        interviews = candidate_count_result.scalars().all()
-        completed = sum(1 for i in interviews if i.lifecycle_status == "COMPLETED")
-        output.append(
-            {
-                **_job_to_dict(job),
-                "candidate_count": len(interviews),
-                "interviews_completed": completed,
-            }
-        )
-    return output
+    counts_result = await db.execute(
+        select(
+            Interview.job_id,
+            func.count(Interview.id),
+            func.sum(case((Interview.lifecycle_status == "COMPLETED", 1), else_=0)),
+        ).group_by(Interview.job_id)
+    )
+    # SUM() over zero matching rows comes back NULL, not 0 — coalesce so a job with no
+    # candidates yet reports interviews_completed: 0 instead of null.
+    counts_by_job = {job_id: (total, completed or 0) for job_id, total, completed in counts_result.all()}
+
+    return [
+        {
+            **_job_to_dict(job),
+            "candidate_count": counts_by_job.get(job.id, (0, 0))[0],
+            "interviews_completed": counts_by_job.get(job.id, (0, 0))[1],
+        }
+        for job in jobs
+    ]
 
 
 @router.get("/jobs/{job_id}")
@@ -142,13 +153,7 @@ async def upload_candidates_csv(job_id: str, file: UploadFile, db: AsyncSession 
     if reader.fieldnames is None or not required_cols.issubset({f.strip().lower() for f in reader.fieldnames}):
         raise HTTPException(status_code=400, detail="CSV must have 'name' and 'phone' columns")
 
-    total_rows = 0
-    normalized_rows = []
-    for row in reader:
-        total_rows += 1
-        normalized = {k.strip().lower(): (v or "").strip() for k, v in row.items()}
-        if normalized.get("name") and normalized.get("phone"):
-            normalized_rows.append(normalized)
+    total_rows, normalized_rows = normalize_candidate_csv_rows(reader)
 
     created = []
     for row in normalized_rows:
@@ -183,6 +188,12 @@ async def list_job_candidates(job_id: str, db: AsyncSession = Depends(get_db)) -
 
 @router.post("/jobs/{job_id}/screen")
 async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    if not is_within_calling_window():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Outside the calling window ({calling_window_label()}). Try again during those hours.",
+        )
+
     job = await _get_job_or_404(job_id, db)
 
     if not job.hunar_agent_id:
@@ -191,6 +202,21 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
     candidates_result = await db.execute(select(Candidate).where(Candidate.id.in_(body.candidate_ids)))
     candidates = candidates_result.scalars().all()
 
+    # Skip anyone with a call already scheduled or in flight for this job, so a
+    # double-click or re-selecting the same row doesn't dial them twice.
+    existing_result = await db.execute(
+        select(Interview.candidate_id).where(
+            Interview.job_id == job_id,
+            Interview.candidate_id.in_(body.candidate_ids),
+            Interview.status.in_(_ACTIVE_INTERVIEW_STATUSES),
+        )
+    )
+    already_active = set(existing_result.scalars().all())
+    candidates = [c for c in candidates if c.id not in already_active]
+
+    if not candidates:
+        return {"scheduled": 0, "skipped_already_active": len(already_active)}
+
     try:
         agent = await hunar_client.get_agent(job.hunar_agent_id)
     except HunarAPIError as exc:
@@ -198,7 +224,11 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
 
     custom_data = _build_custom_data(agent.get("custom_variables", []), job)
 
-    created_interviews = []
+    # Commit after each call instead of once at the end: if a call three of five fails,
+    # the exception below must not lose the record of the two calls that already went
+    # out for real — those would otherwise reach the webhook with no matching Interview
+    # row and be silently dropped (see webhooks.py).
+    scheduled = 0
     for candidate in candidates:
         request_id = f"screen-{job_id[:8]}-{candidate.id[:8]}-{new_uuid()[:8]}"[:64]
         call_payload = {
@@ -215,7 +245,10 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
         try:
             call = await hunar_client.create_call(call_payload)
         except HunarAPIError as exc:
-            raise HTTPException(status_code=502, detail=f"Hunar call creation failed: {exc.message}") from exc
+            raise HTTPException(
+                status_code=502,
+                detail=f"Hunar call creation failed after scheduling {scheduled} call(s): {exc.message}",
+            ) from exc
 
         interview = Interview(
             job_id=job_id,
@@ -225,10 +258,10 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
             status=call.get("status"),
         )
         db.add(interview)
-        created_interviews.append(interview)
+        await db.commit()
+        scheduled += 1
 
-    await db.commit()
-    return {"scheduled": len(created_interviews)}
+    return {"scheduled": scheduled, "skipped_already_active": len(already_active)}
 
 
 @router.get("/interviews/{interview_id}")
@@ -250,6 +283,20 @@ async def get_interview(interview_id: str, db: AsyncSession = Depends(get_db)) -
         "recording_url": interview.recording_url,
         "duration_seconds": interview.duration_seconds,
     }
+
+
+def normalize_candidate_csv_rows(rows: Iterable[dict]) -> tuple[int, list[dict]]:
+    """Lower-cases/trims column names and values, and drops any row missing a
+    name or phone. Returns (total_rows_seen, kept_rows) so callers can report
+    a skipped count without re-deriving it from a length difference."""
+    total_rows = 0
+    normalized_rows = []
+    for row in rows:
+        total_rows += 1
+        normalized = {k.strip().lower(): (v or "").strip() for k, v in row.items()}
+        if normalized.get("name") and normalized.get("phone"):
+            normalized_rows.append(normalized)
+    return total_rows, normalized_rows
 
 
 def _has_public_webhook_url() -> bool:

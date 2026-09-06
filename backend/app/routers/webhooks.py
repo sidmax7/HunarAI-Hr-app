@@ -63,7 +63,20 @@ async def receive_hunar_webhook(request: Request, db: AsyncSession = Depends(get
 
 
 def _apply_status_fields(interview: Interview, payload: dict) -> None:
-    interview.status = payload.get("status", interview.status)
+    new_status = payload.get("status", interview.status)
+    # Webhook delivery order isn't guaranteed. Once an interview has reached a terminal
+    # status, an out-of-order event carrying an earlier, non-terminal status must not
+    # regress it — only another terminal status can still land, and call_summary's
+    # result/recording fields below still apply either way.
+    if interview.status in _TERMINAL_STATUSES and new_status not in _TERMINAL_STATUSES:
+        logger.info(
+            "Ignoring stale status=%s for already-terminal interview=%s (status=%s)",
+            new_status,
+            interview.id,
+            interview.status,
+        )
+    else:
+        interview.status = new_status
     interview.lifecycle_status = payload.get("lifecycle_status", interview.lifecycle_status)
     interview.duration_seconds = payload.get("duration_seconds", interview.duration_seconds)
     interview.answered_by = payload.get("answered_by", interview.answered_by)

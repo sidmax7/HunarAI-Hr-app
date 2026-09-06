@@ -36,6 +36,10 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # Blocks screening, reminder, and escalation calls outside 8 AM-9 PM IST (see
+    # app.services.calling_window). Flip to false only for a deliberate off-hours demo.
+    CALLING_WINDOW_ENABLED: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -11,7 +11,7 @@ import {
   type PdlPerson,
   type Job,
 } from "@/lib/api";
-import { PageHeader, Panel, Textarea, Button, ErrorText, Label, EmptyState, StatRow, MonumentalStat, th, td, tdIndex } from "@/components/ui";
+import { PageHeader, Panel, Textarea, Button, ErrorText, Label, EmptyState, StatRow, MonumentalStat, toast, th, td, tdIndex } from "@/components/ui";
 
 type Stage = "input" | "criteria" | "results";
 
@@ -69,7 +69,7 @@ export default function SearchPage() {
     try {
       const chosen = results.filter((p) => selected.has(p.pdl_id));
       const result = await importCandidates(targetJobId, chosen);
-      alert(`Imported ${result.imported} candidate${result.imported === 1 ? "" : "s"} into the job.`);
+      toast(`Imported ${result.imported} candidate${result.imported === 1 ? "" : "s"} into the job.`);
       setSelected(new Set());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Import failed.");

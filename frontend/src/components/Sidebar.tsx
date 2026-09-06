@@ -20,16 +20,25 @@ export function Sidebar() {
         borderRight: "1px solid var(--border)",
         display: "flex",
         flexDirection: "column",
-        padding: "18px 12px",
-        gap: 4,
+        padding: "18px 0",
+        height: "100%",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px 22px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 22px 20px",
+          borderBottom: "1px solid var(--border)",
+          marginBottom: 8,
+        }}
+      >
         <IconWaveform />
         <span style={{ fontWeight: 650, fontSize: 15, letterSpacing: "-0.01em" }}>HunarAI HR</span>
       </div>
 
-      {SECTIONS.map(({ href, label, icon: Icon }) => {
+      {SECTIONS.map(({ href, label, icon: Icon }, i) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
           <Link
@@ -39,14 +48,30 @@ export function Sidebar() {
               display: "flex",
               alignItems: "center",
               gap: 10,
-              padding: "9px 10px",
-              borderRadius: "var(--radius-sm)",
-              fontSize: 13.5,
-              fontWeight: active ? 600 : 500,
-              color: active ? "var(--text)" : "var(--text-muted)",
+              padding: active ? "14px 22px" : "9px 22px",
+              borderBottom: "1px solid var(--border)",
+              borderLeft: active ? "2px solid var(--accent)" : "2px solid transparent",
+              fontSize: active ? 14 : 13,
+              fontWeight: active ? 650 : 500,
+              color: active ? "var(--text)" : "var(--text-faint)",
               background: active ? "var(--bg-hover)" : "transparent",
             }}
           >
+            <span
+              className="mono"
+              style={{
+                width: 18,
+                height: 18,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10,
+                background: active ? "var(--accent)" : "transparent",
+                color: active ? "#fff" : "var(--text-faint)",
+              }}
+            >
+              {String(i + 1).padStart(2, "0")}
+            </span>
             <Icon active={active} />
             {label}
           </Link>

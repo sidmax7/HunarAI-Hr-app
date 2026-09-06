@@ -74,6 +74,17 @@ uvicorn app.main:app --reload
 
 Required in `.env`: `HUNAR_API_KEY`, `PDL_API_KEY`, `GEMINI_API_KEY`. CAMARA and webhook settings are optional — the app degrades gracefully (USSD-only attendance, polling instead of push) without them. See `.env.example` for the full list.
 
+Every outbound call — screening, attendance reminders, and escalation — is blocked outside 8 AM–9 PM IST by a server-side guardrail (`CALLING_WINDOW_ENABLED=false` disables it for an off-hours demo).
+
+**Tests:**
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Covers the webhook HMAC verification, the CSV import normalization, and the calling-window guardrail's boundary hours.
+
 ### Frontend
 
 ```bash
@@ -92,7 +103,8 @@ backend/
   app/
     models/      # SQLAlchemy models (jobs, candidates, interviews, attendance)
     routers/     # FastAPI route modules per domain
-    services/    # Hunar/Gemini/PDL/CAMARA clients, webhook verification
+    services/    # Hunar/Gemini/PDL/CAMARA clients, webhook verification, calling window
+  tests/         # pytest — webhook security, CSV import, calling-window guardrail
   requirements.txt
 frontend/
   src/

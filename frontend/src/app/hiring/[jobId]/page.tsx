@@ -23,6 +23,7 @@ import {
   GhostCell,
   ServerUnreachableNotice,
   isBackendUnreachable,
+  toast,
   th,
   td,
   tdIndex,
@@ -31,13 +32,25 @@ import {
 const GUARDRAIL_START_HOUR = 8;
 const GUARDRAIL_END_HOUR = 21;
 
-function guardrailNote(interview: Interview): string | null {
-  if (interview.status !== "SCHEDULED") return null;
-  const istHour =
+// Mirrors app.services.calling_window on the backend, which is what actually enforces
+// this — this copy is only so the button can be disabled before a click round-trips to
+// a 400, not the source of truth for whether a call is allowed to go out.
+function currentIstHour(): number {
+  return (
     Number(
       new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date())
-    ) % 24;
-  if (istHour >= GUARDRAIL_START_HOUR && istHour < GUARDRAIL_END_HOUR) return null;
+    ) % 24
+  );
+}
+
+function isWithinCallingWindow(): boolean {
+  const hour = currentIstHour();
+  return hour >= GUARDRAIL_START_HOUR && hour < GUARDRAIL_END_HOUR;
+}
+
+function guardrailNote(interview: Interview): string | null {
+  if (interview.status !== "SCHEDULED") return null;
+  if (isWithinCallingWindow()) return null;
   return "Waiting for calling window (8 AM–9 PM IST)";
 }
 
@@ -93,7 +106,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
       const result = await uploadCandidatesCsv(jobId, file);
       refresh();
       setError(null);
-      alert(`Imported ${result.imported} candidate${result.imported === 1 ? "" : "s"}, skipped ${result.skipped}.`);
+      toast(`Imported ${result.imported} candidate${result.imported === 1 ? "" : "s"}, skipped ${result.skipped}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "CSV import failed.");
     } finally {
@@ -109,7 +122,11 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
       const result = await screenCandidates(jobId, Array.from(selected));
       setSelected(new Set());
       refresh();
-      alert(`Scheduled ${result.scheduled} call${result.scheduled === 1 ? "" : "s"}.`);
+      const skippedNote =
+        result.skipped_already_active > 0
+          ? ` (${result.skipped_already_active} already had a call in progress)`
+          : "";
+      toast(`Scheduled ${result.scheduled} call${result.scheduled === 1 ? "" : "s"}.${skippedNote}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to schedule calls.");
     } finally {
@@ -149,9 +166,19 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
               )}
             </div>
           </div>
-          <Button onClick={handleScreen} disabled={selected.size === 0 || screening}>
-            {screening ? "Scheduling…" : `Call ${selected.size || ""} selected`}
-          </Button>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+            <Button
+              onClick={handleScreen}
+              disabled={selected.size === 0 || screening || !isWithinCallingWindow()}
+            >
+              {screening ? "Scheduling…" : `Call ${selected.size || ""} selected`}
+            </Button>
+            {!isWithinCallingWindow() && (
+              <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                Outside calling window (8 AM–9 PM IST)
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

@@ -100,7 +100,7 @@ export const uploadCandidatesCsv = async (jobId: string, file: File) => {
   return response.json() as Promise<{ imported: number; skipped: number; candidates: Candidate[] }>;
 };
 export const screenCandidates = (jobId: string, candidateIds: string[]) =>
-  request<{ scheduled: number }>(`/api/jobs/${jobId}/screen`, {
+  request<{ scheduled: number; skipped_already_active: number }>(`/api/jobs/${jobId}/screen`, {
     method: "POST",
     body: JSON.stringify({ candidate_ids: candidateIds }),
   });
@@ -217,7 +217,11 @@ export const telecomVerify = (employeeId: string) =>
   );
 
 export const runReminders = (thresholdMinutes = 15) =>
-  request<{ reminders_triggered: number; details: { employee_id: string; employee_name: string; call_id: string | null }[] }>(
-    "/api/attendance/reminders/run",
-    { method: "POST", body: JSON.stringify({ threshold_minutes: thresholdMinutes }) }
-  );
+  request<{
+    reminders_triggered: number;
+    details: { employee_id: string; employee_name: string; call_id: string | null }[];
+    skipped_outside_calling_window?: boolean;
+  }>("/api/attendance/reminders/run", {
+    method: "POST",
+    body: JSON.stringify({ threshold_minutes: thresholdMinutes }),
+  });

@@ -1,8 +1,81 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { ApiError } from "@/lib/api";
+
+// ---- Toast ----
+// A minimal pub-sub instead of a Context provider: any page can call toast(...) without
+// being wrapped in a provider, and <ToastHost /> (mounted once in the root layout) is the
+// only subscriber. Replaces window.alert(), which is jarring against a hand-built design
+// system and blocks the page until dismissed.
+
+type Toast = { id: number; message: string; variant: "success" | "danger" };
+type ToastListener = (toasts: Toast[]) => void;
+
+let toastId = 0;
+let toasts: Toast[] = [];
+const toastListeners = new Set<ToastListener>();
+
+function notifyToastListeners() {
+  for (const listener of toastListeners) listener(toasts);
+}
+
+export function toast(message: string, variant: Toast["variant"] = "success") {
+  const id = ++toastId;
+  toasts = [...toasts, { id, message, variant }];
+  notifyToastListeners();
+  setTimeout(() => {
+    toasts = toasts.filter((t) => t.id !== id);
+    notifyToastListeners();
+  }, 4000);
+}
+
+export function ToastHost() {
+  const [current, setCurrent] = useState<Toast[]>([]);
+
+  useEffect(() => {
+    toastListeners.add(setCurrent);
+    return () => {
+      toastListeners.delete(setCurrent);
+    };
+  }, []);
+
+  if (current.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 20,
+        right: 20,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        zIndex: 1000,
+        maxWidth: 360,
+      }}
+    >
+      {current.map((t) => (
+        <div
+          key={t.id}
+          role="status"
+          style={{
+            border: `1px solid ${t.variant === "danger" ? "var(--danger)" : "var(--border-strong)"}`,
+            background: t.variant === "danger" ? "var(--danger-soft)" : "var(--bg-elevated)",
+            color: t.variant === "danger" ? "var(--danger)" : "var(--text)",
+            padding: "10px 14px",
+            fontSize: 13,
+            fontWeight: 550,
+            boxShadow: "var(--shadow-elevated)",
+          }}
+        >
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export const SUPPORT_PHONE = "+919686204007";
 export const SUPPORT_PHONE_DISPLAY = "+91 96862 04007";

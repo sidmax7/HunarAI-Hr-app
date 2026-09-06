@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.attendance import Attendance, Employee, Location
+from app.services.calling_window import is_within_calling_window
 from app.services.hunar_client import HunarAPIError, hunar_client
 from app.services.reminder_service import check_and_send_reminders
 from app.services.telecom_location_client import (
@@ -188,6 +189,9 @@ async def _trigger_escalation_call(employee: Employee, location: Location) -> st
     testable end-to-end without a real telecom deal — the agent says the employee's name
     so multiple test employees sharing one real number can still be told apart."""
     if not settings.ATTENDANCE_ESCALATION_AGENT_ID or not employee.phone_number:
+        return None
+    if not is_within_calling_window():
+        logger.info("Skipping escalation call for employee %s: outside calling window", employee.id)
         return None
     try:
         call = await hunar_client.create_call(

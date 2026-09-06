@@ -28,6 +28,7 @@ import {
   GhostCell,
   ServerUnreachableNotice,
   isBackendUnreachable,
+  toast,
   th,
   td,
   tdIndex,
@@ -70,8 +71,12 @@ export default function AttendancePage() {
     try {
       const result = await telecomVerify(employeeId);
       refresh();
-      if (!result.verified && result.escalation_call_id) {
-        alert("Location could not be verified — an escalation call has been placed.");
+      if (!result.verified) {
+        if (result.escalation_call_id) {
+          toast("Location could not be verified — an escalation call has been placed.", "danger");
+        } else {
+          toast("Location could not be verified. No escalation call was placed (outside calling hours or not configured).", "danger");
+        }
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Verification failed.");
@@ -86,7 +91,11 @@ export default function AttendancePage() {
     try {
       const result = await runReminders();
       refresh();
-      alert(`Triggered ${result.reminders_triggered} reminder call${result.reminders_triggered === 1 ? "" : "s"}.`);
+      if (result.skipped_outside_calling_window) {
+        toast("Skipped — outside the calling window (8 AM–9 PM IST).", "danger");
+      } else {
+        toast(`Triggered ${result.reminders_triggered} reminder call${result.reminders_triggered === 1 ? "" : "s"}.`);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to run reminders.");
     } finally {

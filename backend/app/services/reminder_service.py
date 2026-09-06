@@ -1,11 +1,12 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.attendance import Attendance, Employee, Location
+from app.services.calling_window import CALLING_WINDOW_TIMEZONE, is_within_calling_window
 from app.services.hunar_client import HunarAPIError, hunar_client
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,14 @@ DEFAULT_THRESHOLD_MINUTES = 15
 async def check_and_send_reminders(db: AsyncSession, threshold_minutes: int = DEFAULT_THRESHOLD_MINUTES) -> dict:
     """Calls employees with a shift_start set who haven't checked in `threshold_minutes`
     after that time. Shared by the manually-triggered endpoint and the periodic scheduler
-    job so both paths run identical logic."""
-    today = date.today()
-    now = datetime.now()
+    job so both paths run identical logic. Shift times are wall-clock local values with
+    no stored timezone, so "today" and "now" are anchored to the same IST clock the
+    calling-window guardrail uses, rather than the server host's own local timezone."""
+    now = datetime.now(CALLING_WINDOW_TIMEZONE)
+    today = now.date()
+
+    if not is_within_calling_window(now):
+        return {"reminders_triggered": 0, "details": [], "skipped_outside_calling_window": True}
 
     employees_result = await db.execute(select(Employee).where(Employee.shift_start.is_not(None)))
     employees = employees_result.scalars().all()
@@ -30,7 +36,7 @@ async def check_and_send_reminders(db: AsyncSession, threshold_minutes: int = DE
     for employee in employees:
         if employee.id in checked_in_ids:
             continue
-        shift_datetime = datetime.combine(today, employee.shift_start)
+        shift_datetime = datetime.combine(today, employee.shift_start, tzinfo=CALLING_WINDOW_TIMEZONE)
         if now < shift_datetime + timedelta(minutes=threshold_minutes):
             continue
 
@@ -40,7 +46,8 @@ async def check_and_send_reminders(db: AsyncSession, threshold_minutes: int = DE
             continue
 
         call_id = await _trigger_reminder_call(employee, location)
-        triggered.append({"employee_id": employee.id, "employee_name": employee.name, "call_id": call_id})
+        if call_id:
+            triggered.append({"employee_id": employee.id, "employee_name": employee.name, "call_id": call_id})
 
     return {"reminders_triggered": len(triggered), "details": triggered}
 
