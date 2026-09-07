@@ -166,6 +166,52 @@ textarea {
   align-items: start;
 }
 
+/* API console: a rail row at rest carries no fill, so hover needs a real CSS
+   rule rather than an inline style — the densest, most click-driven list in
+   the app is the one place this system's usual "no row hover" default reads
+   as unresponsive rather than restrained. The row's own inline style leaves
+   background unset (rather than "transparent") so this rule can reach it: an
+   inline value, even "transparent", always outranks a stylesheet rule. */
+.rail-row {
+  background: transparent;
+}
+
+.rail-row:hover {
+  background: var(--bg-hover);
+}
+
+/* Inverse of .two-col-320: a fixed rail on the left, working area on the right. */
+.two-col-rail {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+/* The console's one authored moment: a response settling into place when it
+   arrives. Nothing is parked invisible waiting for it — the element does not
+   exist until a request comes back. */
+@keyframes response-settle {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.response-settle {
+  animation: response-settle 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .response-settle {
+    animation: none;
+  }
+}
+
 @media (max-width: 860px) {
   .app-shell {
     flex-direction: column;
@@ -178,7 +224,8 @@ textarea {
     padding: 20px 16px 48px;
   }
   .two-col-320,
-  .two-col-even {
+  .two-col-even,
+  .two-col-rail {
     grid-template-columns: 1fr;
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   getJob,
@@ -12,6 +12,7 @@ import {
   type Interview,
 } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
+import { formatDuration, interestTone, normalizeScreeningResult } from "@/lib/screening";
 import {
   Button,
   Input,
@@ -65,6 +66,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
   const [phone, setPhone] = useState("");
   const [adding, setAdding] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [expandedInterview, setExpandedInterview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => {
@@ -185,7 +187,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
       {error && <ErrorText>{error}</ErrorText>}
 
       <StatRow>
-        <MonumentalStat value={job.interviews.length} label="Candidates" />
+        <MonumentalStat value={job.candidate_count ?? job.interviews.length} label="Candidates" />
         <MonumentalStat value={job.interviews_completed ?? 0} label="Completed" />
       </StatRow>
 
@@ -212,7 +214,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
       <div className="two-col-320">
         <Panel style={{ padding: 0 }}>
           <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", fontSize: 13.5, fontWeight: 600 }}>
-            Candidates ({job.interviews.length})
+            Candidates ({job.candidate_count ?? job.interviews.length})
           </div>
           {job.interviews.length === 0 ? (
             <div style={{ padding: 20 }}>
@@ -229,41 +231,84 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
                     <th style={th}>Phone</th>
                     <th style={th}>Call status</th>
                     <th style={th}>Engagement</th>
+                    <th style={th}>Result</th>
                   </tr>
                 </thead>
                 <tbody>
                   {job.interviews.map((interview, index) => {
                     const candidate = interview.candidate;
                     if (!candidate) return null;
+                    // Keyed by candidate, not interview: an unscreened candidate has no
+                    // interview id, and every one of them would share a null key.
+                    const expanded = expandedInterview === candidate.id;
+                    const hasDetail = Boolean(interview.result) || Boolean(interview.recording_url);
                     return (
-                      <tr key={candidate.id}>
-                        <td style={tdIndex} className="mono">
-                          {String(index + 1).padStart(2, "0")}
-                        </td>
-                        <td style={td}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(candidate.id)}
-                            onChange={() => toggle(candidate.id)}
-                            disabled={!candidate.phone}
-                          />
-                        </td>
-                        <td style={td}>{candidate.name}</td>
-                        <td style={{ ...td, color: "var(--text-muted)" }} className="mono">
-                          {candidate.phone || <GhostCell title="No phone on file" />}
-                        </td>
-                        <td style={td}>
-                          <StatusPill value={interview.status} fallbackLabel="Not started" />
-                          {guardrailNote(interview) && (
-                            <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-faint)" }}>
-                              {guardrailNote(interview)}
-                            </div>
-                          )}
-                        </td>
-                        <td style={td}>
-                          <StatusPill value={interview.lifecycle_status} fallbackLabel="—" />
-                        </td>
-                      </tr>
+                      <Fragment key={candidate.id}>
+                        <tr>
+                          <td style={tdIndex} className="mono">
+                            {String(index + 1).padStart(2, "0")}
+                          </td>
+                          <td style={td}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(candidate.id)}
+                              onChange={() => toggle(candidate.id)}
+                              disabled={!candidate.phone}
+                            />
+                          </td>
+                          <td style={td}>{candidate.name}</td>
+                          <td style={{ ...td, color: "var(--text-muted)" }} className="mono">
+                            {candidate.phone || <GhostCell title="No phone on file" />}
+                          </td>
+                          <td style={td}>
+                            <StatusPill value={interview.status} fallbackLabel="Not started" />
+                            {guardrailNote(interview) && (
+                              <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-faint)" }}>
+                                {guardrailNote(interview)}
+                              </div>
+                            )}
+                          </td>
+                          <td style={td}>
+                            <StatusPill value={interview.lifecycle_status} fallbackLabel="—" />
+                          </td>
+                          <td style={td}>
+                            {hasDetail ? (
+                              <button
+                                onClick={() => setExpandedInterview(expanded ? null : candidate.id)}
+                                aria-expanded={expanded}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  padding: "2px 8px",
+                                  borderRadius: 0,
+                                  border: "1px solid var(--border-strong)",
+                                  background: expanded ? "var(--bg-hover)" : "transparent",
+                                  color: "var(--text)",
+                                  fontSize: 11.5,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                <span className="mono" style={{ fontSize: 9, color: "var(--text-faint)" }}>
+                                  {expanded ? "▾" : "▸"}
+                                </span>
+                                {expanded ? "Hide" : "View"}
+                              </button>
+                            ) : (
+                              <GhostCell title="No screening result yet" />
+                            )}
+                          </td>
+                        </tr>
+                        {expanded && (
+                          <tr>
+                            <td colSpan={7} style={{ padding: 0, borderBottom: "1px solid var(--border)" }}>
+                              <ScreeningResultPanel interview={interview} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -301,5 +346,139 @@ export default function JobDetailPage({ params }: { params: Promise<{ jobId: str
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The structured outcome of a screening call: what the backend has been storing from
+ * Hunar's `call_result_done` / `call_summary` webhooks all along. Reading this is the
+ * point of the product — the recording is the fallback, not the deliverable.
+ */
+function ScreeningResultPanel({ interview }: { interview: Interview }) {
+  const { fields, summary, isEmpty } = normalizeScreeningResult(interview.result);
+  const duration = formatDuration(interview.duration_seconds);
+
+  return (
+    <div style={{ background: "var(--bg)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+      {isEmpty && !interview.recording_url && (
+        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          This call didn&apos;t return a screening result.
+        </p>
+      )}
+
+      {fields.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+          {fields.map((field) => (
+            <div
+              key={field.key}
+              style={{
+                border: "1px solid var(--border)",
+                background: "var(--bg-elevated)",
+                padding: "9px 12px",
+                minWidth: 128,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 650,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.07em",
+                  color: "var(--text-faint)",
+                  marginBottom: 5,
+                }}
+              >
+                {field.label}
+              </div>
+              {field.kind === "pill" ? (
+                <InterestPill value={field.value} />
+              ) : (
+                <div
+                  className={field.kind === "mono" ? "mono" : undefined}
+                  style={{ fontSize: 13, color: "var(--text)" }}
+                >
+                  {field.value}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {summary && (
+        <div>
+          <div
+            style={{
+              fontSize: 10.5,
+              fontWeight: 650,
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
+              color: "var(--text-faint)",
+              marginBottom: 6,
+            }}
+          >
+            Summary
+          </div>
+          <p style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--text)", maxWidth: "68ch" }}>{summary}</p>
+        </div>
+      )}
+
+      {interview.recording_url && (
+        <div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 8,
+              fontSize: 10.5,
+              fontWeight: 650,
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
+              color: "var(--text-faint)",
+              marginBottom: 6,
+            }}
+          >
+            Recording
+            {duration && (
+              <span className="mono" style={{ letterSpacing: 0, textTransform: "none", fontWeight: 500 }}>
+                {duration}
+              </span>
+            )}
+          </div>
+          <audio controls preload="none" src={interview.recording_url} style={{ width: "100%", maxWidth: 420 }}>
+            <a href={interview.recording_url}>Download the recording</a>
+          </audio>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InterestPill({ value }: { value: string }) {
+  const tone = interestTone(value);
+  const colors = {
+    success: { bg: "var(--success-soft)", fg: "var(--success)", border: "var(--success)" },
+    warning: { bg: "var(--warning-soft)", fg: "var(--warning)", border: "var(--warning)" },
+    neutral: { bg: "var(--bg-hover)", fg: "var(--text-muted)", border: "var(--border-strong)" },
+  }[tone];
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "2px 8px",
+        borderRadius: 0,
+        border: `1px solid ${colors.border}`,
+        background: colors.bg,
+        color: colors.fg,
+        fontSize: 11.5,
+        fontWeight: 600,
+        lineHeight: 1.6,
+        textTransform: "capitalize",
+      }}
+    >
+      {value}
+    </span>
   );
 }

@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
   status: number;
@@ -67,15 +67,19 @@ export type Candidate = {
 };
 
 export type Interview = {
-  interview_id: string;
+  /** Null when the candidate has been added but never screened. */
+  interview_id: string | null;
   candidate: Candidate | null;
   status: string | null;
   lifecycle_status: string | null;
   result: Record<string, unknown> | null;
   recording_url: string | null;
+  duration_seconds: number | null;
+  answered_by: string | null;
   created_at: string | null;
 };
 
+/** One entry per candidate on the job, carrying its latest interview when there is one. */
 export type JobDetail = Job & { interviews: Interview[] };
 
 export const listJobs = () => request<Job[]>("/api/jobs");

@@ -79,22 +79,24 @@ async def list_jobs(db: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await db.execute(select(Job).order_by(Job.created_at.desc()))
     jobs = result.scalars().all()
 
-    counts_result = await db.execute(
-        select(
-            Interview.job_id,
-            func.count(Interview.id),
-            func.sum(case((Interview.lifecycle_status == "COMPLETED", 1), else_=0)),
-        ).group_by(Interview.job_id)
+    candidate_counts_result = await db.execute(
+        select(Candidate.job_id, func.count(Candidate.id)).group_by(Candidate.job_id)
+    )
+    candidate_counts_by_job = dict(candidate_counts_result.all())
+
+    completed_result = await db.execute(
+        select(Interview.job_id, func.sum(case((Interview.status == "COMPLETED", 1), else_=0)))
+        .group_by(Interview.job_id)
     )
     # SUM() over zero matching rows comes back NULL, not 0 — coalesce so a job with no
-    # candidates yet reports interviews_completed: 0 instead of null.
-    counts_by_job = {job_id: (total, completed or 0) for job_id, total, completed in counts_result.all()}
+    # interviews yet reports interviews_completed: 0 instead of null.
+    completed_by_job = {job_id: completed or 0 for job_id, completed in completed_result.all()}
 
     return [
         {
             **_job_to_dict(job),
-            "candidate_count": counts_by_job.get(job.id, (0, 0))[0],
-            "interviews_completed": counts_by_job.get(job.id, (0, 0))[1],
+            "candidate_count": candidate_counts_by_job.get(job.id, 0),
+            "interviews_completed": completed_by_job.get(job.id, 0),
         }
         for job in jobs
     ]
@@ -104,31 +106,43 @@ async def list_jobs(db: AsyncSession = Depends(get_db)) -> list[dict]:
 async def get_job(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     job = await _get_job_or_404(job_id, db)
 
-    interviews_result = await db.execute(select(Interview).where(Interview.job_id == job_id))
-    interviews = interviews_result.scalars().all()
+    # Driven off candidates, not interviews: a candidate who has been added but never
+    # screened still has to appear in the list, or there is no way to select and call
+    # them — which is the whole point of adding them.
+    candidates_result = await db.execute(select(Candidate).where(Candidate.job_id == job_id))
+    candidates = candidates_result.scalars().all()
 
-    candidate_ids = [i.candidate_id for i in interviews]
-    candidates_by_id = {}
-    if candidate_ids:
-        candidates_result = await db.execute(select(Candidate).where(Candidate.id.in_(candidate_ids)))
-        candidates_by_id = {c.id: c for c in candidates_result.scalars().all()}
+    interviews_result = await db.execute(select(Interview).where(Interview.job_id == job_id))
+    # Keep the newest interview per candidate: a re-screened candidate has more than one.
+    latest_by_candidate: dict[str, Interview] = {}
+    for interview in interviews_result.scalars().all():
+        existing = latest_by_candidate.get(interview.candidate_id)
+        if existing is None or (interview.created_at and existing.created_at and interview.created_at > existing.created_at):
+            latest_by_candidate[interview.candidate_id] = interview
 
     interview_list = []
-    for interview in interviews:
-        candidate = candidates_by_id.get(interview.candidate_id)
+    for candidate in candidates:
+        interview = latest_by_candidate.get(candidate.id)
         interview_list.append(
             {
-                "interview_id": interview.id,
-                "candidate": _candidate_to_dict(candidate) if candidate else None,
-                "status": interview.status,
-                "lifecycle_status": interview.lifecycle_status,
-                "result": interview.result,
-                "recording_url": interview.recording_url,
-                "created_at": interview.created_at.isoformat() if interview.created_at else None,
+                "interview_id": interview.id if interview else None,
+                "candidate": _candidate_to_dict(candidate),
+                "status": interview.status if interview else None,
+                "lifecycle_status": interview.lifecycle_status if interview else None,
+                "result": interview.result if interview else None,
+                "recording_url": interview.recording_url if interview else None,
+                "duration_seconds": interview.duration_seconds if interview else None,
+                "answered_by": interview.answered_by if interview else None,
+                "created_at": interview.created_at.isoformat() if interview and interview.created_at else None,
             }
         )
 
-    return {**_job_to_dict(job), "interviews": interview_list}
+    return {
+        **_job_to_dict(job),
+        "interviews": interview_list,
+        "candidate_count": len(candidates),
+        "interviews_completed": sum(1 for i in latest_by_candidate.values() if i.status == "COMPLETED"),
+    }
 
 
 @router.post("/jobs/{job_id}/candidates")
@@ -222,7 +236,7 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
     except HunarAPIError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to load Hunar agent: {exc.message}") from exc
 
-    custom_data = _build_custom_data(agent.get("custom_variables", []), job)
+    agent_variables = agent.get("custom_variables", [])
 
     # Commit after each call instead of once at the end: if a call three of five fails,
     # the exception below must not lose the record of the two calls that already went
@@ -236,7 +250,7 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
             "callee_name": candidate.name,
             "mobile_number": candidate.phone,
             "request_id": request_id,
-            "custom_data": custom_data,
+            "custom_data": _build_custom_data(agent_variables, job, candidate),
         }
         if _has_public_webhook_url():
             call_payload["callback_config"] = {
@@ -304,15 +318,27 @@ def _has_public_webhook_url() -> bool:
     return url.startswith("https://") and "your-public-ip" not in url and "localhost" not in url
 
 
-def _build_custom_data(custom_variables: list[str], job: Job) -> dict[str, str]:
+def _build_custom_data(
+    custom_variables: list[str], job: Job, candidate: Candidate | None = None
+) -> dict[str, str]:
+    """Fills an agent's declared custom variables from the job (and the candidate being
+    called, for per-person variables). An agent asks for whatever variable names its
+    author chose, so the same value is offered under each spelling seen in practice —
+    an unfilled variable reaches the callee as a blank in the middle of a sentence."""
     criteria = job.parsed_criteria or {}
     known = {
         "company": criteria.get("company") or "our company",
         "role": job.title,
+        "job_role": job.title,
         "job_title": job.title,
         "title": job.title,
         "location": criteria.get("location") or "",
+        "job_description": job.description or "",
     }
+    if candidate is not None:
+        known["candidate_name"] = candidate.name
+        known["current_role"] = candidate.current_title or ""
+        known["current_company"] = candidate.current_company or ""
     return {var: known.get(var, "") for var in custom_variables}
 
 

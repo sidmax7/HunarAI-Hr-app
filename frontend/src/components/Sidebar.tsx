@@ -7,6 +7,7 @@ const SECTIONS = [
   { href: "/hiring", label: "Hiring", icon: IconBriefcase },
   { href: "/search", label: "Search & Reachout", icon: IconSearch },
   { href: "/attendance", label: "Attendance", icon: IconMapPin },
+  { href: "/console", label: "API console", icon: IconTerminal },
 ];
 
 export function Sidebar() {
@@ -111,6 +112,16 @@ function IconSearch({ active }: { active?: boolean }) {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <circle cx="7" cy="7" r="4.5" stroke={iconColor(active)} strokeWidth="1.4" />
       <path d="M10.3 10.3L14 14" stroke={iconColor(active)} strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconTerminal({ active }: { active?: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.2" stroke={iconColor(active)} strokeWidth="1.4" />
+      <path d="M4 6L6.5 8L4 10" stroke={iconColor(active)} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 10.5H12" stroke={iconColor(active)} strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }

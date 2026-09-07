@@ -30,7 +30,7 @@ def test_normalize_handles_none_values():
 
 
 def test_build_custom_data_maps_known_variables():
-    job = SimpleNamespace(title="Backend Engineer", parsed_criteria={"company": "Acme", "location": "Bengaluru"})
+    job = SimpleNamespace(title="Backend Engineer", description="JD text", parsed_criteria={"company": "Acme", "location": "Bengaluru"})
     result = _build_custom_data(["company", "role", "title", "location"], job)
     assert result == {
         "company": "Acme",
@@ -41,12 +41,31 @@ def test_build_custom_data_maps_known_variables():
 
 
 def test_build_custom_data_falls_back_when_criteria_missing():
-    job = SimpleNamespace(title="Backend Engineer", parsed_criteria=None)
+    job = SimpleNamespace(title="Backend Engineer", description="JD text", parsed_criteria=None)
     result = _build_custom_data(["company", "location"], job)
     assert result == {"company": "our company", "location": ""}
 
 
 def test_build_custom_data_unknown_variable_becomes_empty_string():
-    job = SimpleNamespace(title="Backend Engineer", parsed_criteria={})
+    job = SimpleNamespace(title="Backend Engineer", description="JD text", parsed_criteria={})
     result = _build_custom_data(["some_unmapped_variable"], job)
     assert result == {"some_unmapped_variable": ""}
+
+
+def test_build_custom_data_fills_per_candidate_variables():
+    # The live "Hiring Screener" agent asks for candidate_name and job_role; both used to
+    # arrive empty, so the agent read a blank where the person's name belonged.
+    job = SimpleNamespace(title="Warehouse Operations Associate", description="JD text", parsed_criteria={"company": "HunarAI Logistics", "location": "Bangalore"})
+    candidate = SimpleNamespace(name="Raihaan", current_title="Ops Executive", current_company="Acme")
+    result = _build_custom_data(["candidate_name", "job_role", "location", "company"], job, candidate)
+    assert result == {
+        "candidate_name": "Raihaan",
+        "job_role": "Warehouse Operations Associate",
+        "location": "Bangalore",
+        "company": "HunarAI Logistics",
+    }
+
+
+def test_build_custom_data_without_a_candidate_leaves_per_candidate_variables_empty():
+    job = SimpleNamespace(title="Warehouse Operations Associate", description="JD text", parsed_criteria={})
+    assert _build_custom_data(["candidate_name"], job) == {"candidate_name": ""}
