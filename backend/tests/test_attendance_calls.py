@@ -15,7 +15,8 @@ from app.config import settings
 from app.database import Base
 from app.models.attendance import AttendanceCall, AttendanceCallType, Employee, Location
 from app.routers.attendance import _trigger_escalation_call, list_employee_calls
-from app.routers.webhooks import _apply_status_fields, receive_hunar_webhook
+from app.services.call_sync import apply_status_fields
+from app.routers.webhooks import receive_hunar_webhook
 from app.services.reminder_service import _trigger_reminder_call
 from app.services.webhook_security import compute_hunar_signature
 
@@ -97,7 +98,7 @@ async def test_list_employee_calls_only_returns_that_employees_calls(db):
 @pytest.mark.asyncio
 async def test_get_job_style_result_round_trips_on_an_attendance_call(db):
     """The whole point: a webhook landing on an AttendanceCall updates it exactly like
-    it would an Interview, via the same _apply_status_fields function."""
+    it would an Interview, via the same apply_status_fields function."""
     location = await _location(db)
     employee = await _employee(db, location)
     call = AttendanceCall(
@@ -107,7 +108,7 @@ async def test_get_job_style_result_round_trips_on_an_attendance_call(db):
     db.add(call)
     await db.commit()
 
-    _apply_status_fields(
+    apply_status_fields(
         call,
         {"status": "COMPLETED", "lifecycle_status": "COMPLETED", "engagement_status": "ENGAGED", "duration_seconds": 41.0},
     )

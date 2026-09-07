@@ -173,7 +173,10 @@ async def telecom_verify(body: TelecomVerifyRequest, db: AsyncSession = Depends(
     except TelecomLocationNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except TelecomLocationError as exc:
-        raise HTTPException(status_code=502, detail=exc.message) from exc
+        # 503, not 502/504: Cloudflare intercepts those two with its own branded error
+        # page, stripping CORS headers, which turns a real error into a misleading
+        # CORS failure in the browser instead.
+        raise HTTPException(status_code=503, detail=exc.message) from exc
 
     if result.get("verificationResult") != "TRUE":
         escalation_call_id = await _trigger_escalation_call(db, employee, location)

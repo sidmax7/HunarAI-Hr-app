@@ -42,7 +42,11 @@ async def find_candidates(body: FindCandidatesRequest) -> dict:
     try:
         result = await pdl_client.search_people(query, size=body.size)
     except PDLAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"PDL search failed: {exc.message}") from exc
+        # Cloudflare intercepts 502/504 responses with its own branded error page,
+        # stripping all origin headers including CORS — use 503 so the real error
+        # (and CORS headers) actually reach the browser instead of a blocked-by-CORS
+        # dead end masking the real failure.
+        raise HTTPException(status_code=503, detail=f"PDL search failed: {exc.message}") from exc
     return result
 
 

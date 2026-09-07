@@ -8,13 +8,12 @@ from app.config import settings
 from app.database import get_db
 from app.models.attendance import AttendanceCall
 from app.models.interview import Interview
+from app.services.call_sync import apply_status_fields
 from app.services.webhook_security import verify_hunar_webhook_signature
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
-
-_TERMINAL_STATUSES = {"COMPLETED", "NOT_CONNECTED", "FAILED", "CANCELLED"}
 
 
 @router.post("/hunar")
@@ -53,13 +52,13 @@ async def receive_hunar_webhook(request: Request, db: AsyncSession = Depends(get
         return {"ok": True, "ignored": True}
 
     if event_type == "call_status_updated":
-        _apply_status_fields(record, payload)
+        apply_status_fields(record, payload)
     elif event_type == "call_recording_done":
         record.recording_url = payload.get("recording_url")
     elif event_type == "call_result_done":
         record.result = payload.get("result")
     elif event_type == "call_summary":
-        _apply_status_fields(record, payload)
+        apply_status_fields(record, payload)
         record.recording_url = payload.get("recording_url") or record.recording_url
         record.result = payload.get("result") or record.result
     else:
@@ -68,29 +67,3 @@ async def receive_hunar_webhook(request: Request, db: AsyncSession = Depends(get
 
     await db.commit()
     return {"ok": True}
-
-
-def _apply_status_fields(interview: "Interview | AttendanceCall", payload: dict) -> None:
-    new_status = payload.get("status", interview.status)
-    # Webhook delivery order isn't guaranteed. Once an interview has reached a terminal
-    # status, an out-of-order event carrying an earlier, non-terminal status must not
-    # regress it — only another terminal status can still land, and call_summary's
-    # result/recording fields below still apply either way.
-    if interview.status in _TERMINAL_STATUSES and new_status not in _TERMINAL_STATUSES:
-        logger.info(
-            "Ignoring stale status=%s for already-terminal interview=%s (status=%s)",
-            new_status,
-            interview.id,
-            interview.status,
-        )
-    else:
-        interview.status = new_status
-    # `lifecycle_status` tracks the call attempt (NOT_STARTED/IN_PROGRESS/COMPLETED/...),
-    # not whether the candidate engaged — that signal is the separate `engagement_status`
-    # field (ENGAGED/NOT_ENGAGED), which was being silently dropped here despite the model
-    # already having a column for it.
-    interview.lifecycle_status = payload.get("lifecycle_status", interview.lifecycle_status)
-    interview.engagement_status = payload.get("engagement_status", interview.engagement_status)
-    interview.duration_seconds = payload.get("duration_seconds", interview.duration_seconds)
-    interview.answered_by = payload.get("answered_by", interview.answered_by)
-    interview.call_ended_by = payload.get("call_ended_by", interview.call_ended_by)

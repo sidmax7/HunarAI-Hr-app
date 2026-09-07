@@ -57,7 +57,10 @@ async def create_job(body: CreateJobRequest, db: AsyncSession = Depends(get_db))
             }
         )
     except HunarAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"Hunar agent creation failed: {exc.message}") from exc
+        # 503, not 502/504: Cloudflare intercepts those two with its own branded error
+        # page, stripping CORS headers, which turns a real error into a misleading
+        # CORS failure in the browser instead.
+        raise HTTPException(status_code=503, detail=f"Hunar agent creation failed: {exc.message}") from exc
 
     job = Job(
         title=parsed.get("title", "Untitled Role"),
@@ -234,7 +237,10 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
     try:
         agent = await hunar_client.get_agent(job.hunar_agent_id)
     except HunarAPIError as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to load Hunar agent: {exc.message}") from exc
+        # 503, not 502/504: Cloudflare intercepts those two with its own branded error
+        # page, stripping CORS headers, which turns a real error into a misleading
+        # CORS failure in the browser instead.
+        raise HTTPException(status_code=503, detail=f"Failed to load Hunar agent: {exc.message}") from exc
 
     agent_variables = agent.get("custom_variables", [])
 
@@ -258,8 +264,11 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
         try:
             call = await hunar_client.create_call(call_payload)
         except HunarAPIError as exc:
+            # 503, not 502/504: Cloudflare intercepts those two with its own branded
+            # error page, stripping CORS headers, which turns a real error into a
+            # misleading CORS failure in the browser instead.
             raise HTTPException(
-                status_code=502,
+                status_code=503,
                 detail=f"Hunar call creation failed after scheduling {scheduled} call(s): {exc.message}",
             ) from exc
 
