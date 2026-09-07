@@ -36,6 +36,8 @@ const STATE_MAP: Record<string, { label: string; tone: Tone }> = {
 
   USSD: { label: "USSD", tone: "accent" },
   TELECOM_LOCATION: { label: "Telecom location", tone: "accent" },
+  REMINDER: { label: "Reminder call", tone: "accent" },
+  ESCALATION: { label: "Escalation call", tone: "accent" },
 };
 
 export function StatusPill({ value, fallbackLabel }: { value: string | null | undefined; fallbackLabel?: string }) {

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   listLocations,
   listEmployees,
   todayAttendance,
+  listEmployeeCalls,
   createLocation,
   createEmployee,
   telecomVerify,
@@ -13,8 +14,10 @@ import {
   type Location,
   type Employee,
   type AttendanceRecord,
+  type AttendanceCall,
 } from "@/lib/api";
 import { StatusPill } from "@/components/StatusPill";
+import { CallResultPanel } from "@/components/CallResultPanel";
 import {
   PageHeader,
   Panel,
@@ -44,6 +47,9 @@ export default function AttendancePage() {
   const [runningReminders, setRunningReminders] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [showEmployeeForm, setShowEmployeeForm] = useState(false);
+  const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
+  const [callsByEmployee, setCallsByEmployee] = useState<Record<string, AttendanceCall[]>>({});
+  const [loadingCalls, setLoadingCalls] = useState<string | null>(null);
 
   function refresh() {
     Promise.all([listLocations(), listEmployees(), todayAttendance()])
@@ -65,6 +71,16 @@ export default function AttendancePage() {
     return () => clearInterval(interval);
   }, []);
 
+  // A freshly placed call invalidates that employee's cached call list, so re-expanding
+  // fetches the new row instead of showing stale history from before this action.
+  function forgetCallsFor(employeeIds: string[]) {
+    setCallsByEmployee((current) => {
+      const next = { ...current };
+      for (const id of employeeIds) delete next[id];
+      return next;
+    });
+  }
+
   async function handleVerify(employeeId: string) {
     setVerifying(employeeId);
     setError(null);
@@ -73,6 +89,7 @@ export default function AttendancePage() {
       refresh();
       if (!result.verified) {
         if (result.escalation_call_id) {
+          forgetCallsFor([employeeId]);
           toast("Location could not be verified — an escalation call has been placed.", "danger");
         } else {
           toast("Location could not be verified. No escalation call was placed (outside calling hours or not configured).", "danger");
@@ -91,6 +108,7 @@ export default function AttendancePage() {
     try {
       const result = await runReminders();
       refresh();
+      forgetCallsFor(result.details.map((d) => d.employee_id));
       if (result.skipped_outside_calling_window) {
         toast("Skipped — outside the calling window (8 AM–9 PM IST).", "danger");
       } else {
@@ -100,6 +118,25 @@ export default function AttendancePage() {
       setError(err instanceof ApiError ? err.message : "Failed to run reminders.");
     } finally {
       setRunningReminders(false);
+    }
+  }
+
+  async function toggleCalls(employeeId: string) {
+    if (expandedEmployee === employeeId) {
+      setExpandedEmployee(null);
+      return;
+    }
+    setExpandedEmployee(employeeId);
+    if (callsByEmployee[employeeId]) return;
+    setLoadingCalls(employeeId);
+    try {
+      const calls = await listEmployeeCalls(employeeId);
+      setCallsByEmployee((current) => ({ ...current, [employeeId]: calls }));
+    } catch {
+      toast("Couldn't load call history for this employee.", "danger");
+      setExpandedEmployee(null);
+    } finally {
+      setLoadingCalls(null);
     }
   }
 
@@ -146,6 +183,7 @@ export default function AttendancePage() {
                   <th style={th}>Check-in</th>
                   <th style={th}>Method</th>
                   <th style={th}>Verified</th>
+                  <th style={th}>Calls</th>
                   <th style={th}></th>
                 </tr>
               </thead>
@@ -153,36 +191,76 @@ export default function AttendancePage() {
                 {employees.map((employee, index) => {
                   const record = attendanceByEmployeeId.get(employee.id);
                   const location = locationById.get(employee.location_id);
+                  const expanded = expandedEmployee === employee.id;
+                  const calls = callsByEmployee[employee.id];
                   return (
-                    <tr key={employee.id}>
-                      <td style={tdIndex} className="mono">
-                        {String(index + 1).padStart(2, "0")}
-                      </td>
-                      <td style={td}>{employee.name}</td>
-                      <td style={{ ...td, color: "var(--text-muted)" }}>{location?.name ?? "—"}</td>
-                      <td style={{ ...td, color: "var(--text-muted)" }} className="mono">
-                        {record?.check_in_time ? (
-                          new Date(record.check_in_time).toLocaleTimeString()
-                        ) : (
-                          <GhostCell title="Not checked in yet" />
-                        )}
-                      </td>
-                      <td style={td}>
-                        {record ? <StatusPill value={record.check_in_method} fallbackLabel="—" /> : <GhostCell title="Not checked in yet" />}
-                      </td>
-                      <td style={td}>
-                        {record ? (
-                          <StatusPill value={record.verified ? "TRUE" : "FALSE"} />
-                        ) : (
-                          <GhostCell title="Not checked in yet" />
-                        )}
-                      </td>
-                      <td style={td}>
-                        <Button variant="secondary" onClick={() => handleVerify(employee.id)} disabled={verifying === employee.id}>
-                          {verifying === employee.id ? "Verifying…" : "Verify location"}
-                        </Button>
-                      </td>
-                    </tr>
+                    <Fragment key={employee.id}>
+                      <tr>
+                        <td style={tdIndex} className="mono">
+                          {String(index + 1).padStart(2, "0")}
+                        </td>
+                        <td style={td}>{employee.name}</td>
+                        <td style={{ ...td, color: "var(--text-muted)" }}>{location?.name ?? "—"}</td>
+                        <td style={{ ...td, color: "var(--text-muted)" }} className="mono">
+                          {record?.check_in_time ? (
+                            new Date(record.check_in_time).toLocaleTimeString()
+                          ) : (
+                            <GhostCell title="Not checked in yet" />
+                          )}
+                        </td>
+                        <td style={td}>
+                          {record ? <StatusPill value={record.check_in_method} fallbackLabel="—" /> : <GhostCell title="Not checked in yet" />}
+                        </td>
+                        <td style={td}>
+                          {record ? (
+                            <StatusPill value={record.verified ? "TRUE" : "FALSE"} />
+                          ) : (
+                            <GhostCell title="Not checked in yet" />
+                          )}
+                        </td>
+                        <td style={td}>
+                          <button
+                            onClick={() => toggleCalls(employee.id)}
+                            aria-expanded={expanded}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              padding: "2px 8px",
+                              borderRadius: 0,
+                              border: "1px solid var(--border-strong)",
+                              background: expanded ? "var(--bg-hover)" : "transparent",
+                              color: "var(--text)",
+                              fontSize: 11.5,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <span className="mono" style={{ fontSize: 9, color: "var(--text-faint)" }}>
+                              {expanded ? "▾" : "▸"}
+                            </span>
+                            {loadingCalls === employee.id
+                              ? "Loading…"
+                              : calls
+                                ? `${calls.length} call${calls.length === 1 ? "" : "s"}`
+                                : "View calls"}
+                          </button>
+                        </td>
+                        <td style={td}>
+                          <Button variant="secondary" onClick={() => handleVerify(employee.id)} disabled={verifying === employee.id}>
+                            {verifying === employee.id ? "Verifying…" : "Verify location"}
+                          </Button>
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr>
+                          <td colSpan={8} style={{ padding: 0, borderBottom: "1px solid var(--border)" }}>
+                            <EmployeeCallHistory calls={calls} loading={loadingCalls === employee.id} />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -245,6 +323,52 @@ export default function AttendancePage() {
           </div>
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A missed-check-in reminder or a CAMARA-verification-failure escalation call — the
+ * attendance-side equivalent of a job's screening interviews. Fetched lazily per
+ * employee rather than joined into the main table request, since most employees on a
+ * given day have zero calls and don't need this round trip at all.
+ */
+function EmployeeCallHistory({ calls, loading }: { calls: AttendanceCall[] | undefined; loading: boolean }) {
+  if (loading) {
+    return (
+      <div style={{ background: "var(--bg)", padding: "16px 18px" }}>
+        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading call history…</p>
+      </div>
+    );
+  }
+
+  if (!calls || calls.length === 0) {
+    return (
+      <div style={{ background: "var(--bg)", padding: "16px 18px" }}>
+        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          No reminder or escalation calls have been placed to this employee.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+      {calls.map((call, i) => (
+        <div key={call.id} style={{ borderTop: i > 0 ? "1px solid var(--border)" : undefined }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px 0" }}>
+            <StatusPill value={call.call_type} />
+            <StatusPill value={call.status} fallbackLabel="Not started" />
+            {call.engagement_status && <StatusPill value={call.engagement_status} />}
+            {call.created_at && (
+              <span className="mono" style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
+                {new Date(call.created_at).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <CallResultPanel call={call} />
+        </div>
+      ))}
     </div>
   );
 }

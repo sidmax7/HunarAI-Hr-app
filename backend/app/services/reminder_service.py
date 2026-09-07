@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.attendance import Attendance, Employee, Location
+from app.models.attendance import Attendance, AttendanceCall, AttendanceCallType, Employee, Location
 from app.services.calling_window import CALLING_WINDOW_TIMEZONE, is_within_calling_window
-from app.services.hunar_client import HunarAPIError, hunar_client
+from app.services.hunar_client import HunarAPIError, hunar_client, webhook_callback_config
 
 logger = logging.getLogger(__name__)
 
@@ -45,31 +45,46 @@ async def check_and_send_reminders(db: AsyncSession, threshold_minutes: int = DE
         if location is None:
             continue
 
-        call_id = await _trigger_reminder_call(employee, location)
+        call_id = await _trigger_reminder_call(db, employee, location)
         if call_id:
             triggered.append({"employee_id": employee.id, "employee_name": employee.name, "call_id": call_id})
 
     return {"reminders_triggered": len(triggered), "details": triggered}
 
 
-async def _trigger_reminder_call(employee: Employee, location: Location) -> str | None:
+async def _trigger_reminder_call(db: AsyncSession, employee: Employee, location: Location) -> str | None:
     if not settings.ATTENDANCE_REMINDER_AGENT_ID or not employee.phone_number:
         return None
+    call_payload = {
+        "agent_id": settings.ATTENDANCE_REMINDER_AGENT_ID,
+        "callee_name": employee.name,
+        "mobile_number": employee.phone_number,
+        "custom_data": {
+            "employee_name": employee.name,
+            "location_name": location.name,
+            "company": settings.ATTENDANCE_COMPANY_NAME,
+            "shift_start": employee.shift_start.strftime("%I:%M %p") if employee.shift_start else "",
+        },
+    }
+    callback_config = webhook_callback_config()
+    if callback_config:
+        call_payload["callback_config"] = callback_config
     try:
-        call = await hunar_client.create_call(
-            {
-                "agent_id": settings.ATTENDANCE_REMINDER_AGENT_ID,
-                "callee_name": employee.name,
-                "mobile_number": employee.phone_number,
-                "custom_data": {
-                    "employee_name": employee.name,
-                    "location_name": location.name,
-                    "company": settings.ATTENDANCE_COMPANY_NAME,
-                    "shift_start": employee.shift_start.strftime("%I:%M %p") if employee.shift_start else "",
-                },
-            }
-        )
-        return call.get("id")
+        call = await hunar_client.create_call(call_payload)
     except HunarAPIError as exc:
         logger.warning("Reminder call failed for employee %s: %s", employee.id, exc.message)
         return None
+
+    call_id = call.get("id")
+    db.add(
+        AttendanceCall(
+            employee_id=employee.id,
+            employee_name=employee.name,
+            location_id=location.id,
+            call_type=AttendanceCallType.REMINDER,
+            hunar_call_id=call_id,
+            status=call.get("status"),
+        )
+    )
+    await db.commit()
+    return call_id

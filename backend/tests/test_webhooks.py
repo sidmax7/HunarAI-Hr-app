@@ -8,6 +8,7 @@ def _interview(**overrides):
         id="interview-1",
         status=None,
         lifecycle_status=None,
+        engagement_status=None,
         duration_seconds=None,
         answered_by=None,
         call_ended_by=None,
@@ -18,9 +19,22 @@ def _interview(**overrides):
 
 def test_applies_status_on_a_fresh_interview():
     interview = _interview()
-    _apply_status_fields(interview, {"status": "IN_PROGRESS", "lifecycle_status": "ENGAGED"})
+    _apply_status_fields(interview, {"status": "IN_PROGRESS", "lifecycle_status": "IN_PROGRESS"})
     assert interview.status == "IN_PROGRESS"
-    assert interview.lifecycle_status == "ENGAGED"
+    assert interview.lifecycle_status == "IN_PROGRESS"
+
+
+def test_engagement_status_is_persisted_separately_from_lifecycle_status():
+    # Regression: engagement_status (ENGAGED/NOT_ENGAGED — whether the candidate actually
+    # spoke) was being silently dropped. lifecycle_status never holds that value per
+    # Hunar's docs — it only ever tracks the call attempt (COMPLETED/FAILED/...).
+    interview = _interview()
+    _apply_status_fields(
+        interview,
+        {"status": "COMPLETED", "lifecycle_status": "COMPLETED", "engagement_status": "ENGAGED"},
+    )
+    assert interview.lifecycle_status == "COMPLETED"
+    assert interview.engagement_status == "ENGAGED"
 
 
 def test_terminal_status_is_not_regressed_by_a_stale_event():

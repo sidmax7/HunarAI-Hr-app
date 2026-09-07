@@ -38,6 +38,7 @@ const KNOWN_FIELDS: { key: string; label: string; kind: ScreeningFieldKind }[] =
   { key: "notice_period", label: "Notice period", kind: "mono" },
   { key: "can_join_shift", label: "Can join shift", kind: "mono" },
   { key: "experience_years", label: "Experience", kind: "mono" },
+  { key: "years_experience", label: "Experience", kind: "mono" },
   { key: "current_ctc", label: "Current CTC", kind: "mono" },
   { key: "expected_ctc", label: "Expected CTC", kind: "mono" },
   { key: "current_location", label: "Location", kind: "mono" },

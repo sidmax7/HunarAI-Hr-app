@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.attendance import Attendance, Employee, Location
+from app.models.attendance import Attendance, AttendanceCall, AttendanceCallType, Employee, Location
 from app.services.calling_window import is_within_calling_window
-from app.services.hunar_client import HunarAPIError, hunar_client
+from app.services.hunar_client import HunarAPIError, hunar_client, webhook_callback_config
 from app.services.reminder_service import check_and_send_reminders
 from app.services.telecom_location_client import (
     TelecomLocationError,
@@ -176,14 +176,14 @@ async def telecom_verify(body: TelecomVerifyRequest, db: AsyncSession = Depends(
         raise HTTPException(status_code=502, detail=exc.message) from exc
 
     if result.get("verificationResult") != "TRUE":
-        escalation_call_id = await _trigger_escalation_call(employee, location)
+        escalation_call_id = await _trigger_escalation_call(db, employee, location)
         return {"verified": False, "camara_result": result, "escalation_call_id": escalation_call_id}
 
     record = await _mark_attendance(db, employee, method="TELECOM_LOCATION")
     return {"verified": True, "camara_result": result, "attendance": _attendance_to_dict(record)}
 
 
-async def _trigger_escalation_call(employee: Employee, location: Location) -> str | None:
+async def _trigger_escalation_call(db: AsyncSession, employee: Employee, location: Location) -> str | None:
     """Fires when a CAMARA check comes back non-TRUE. Calls the employee's real contact
     number (distinct from any camara_test_number) so verification-failure handling is
     testable end-to-end without a real telecom deal — the agent says the employee's name
@@ -193,23 +193,65 @@ async def _trigger_escalation_call(employee: Employee, location: Location) -> st
     if not is_within_calling_window():
         logger.info("Skipping escalation call for employee %s: outside calling window", employee.id)
         return None
+    call_payload = {
+        "agent_id": settings.ATTENDANCE_ESCALATION_AGENT_ID,
+        "callee_name": employee.name,
+        "mobile_number": employee.phone_number,
+        "custom_data": {
+            "employee_name": employee.name,
+            "location_name": location.name,
+            "company": settings.ATTENDANCE_COMPANY_NAME,
+        },
+    }
+    callback_config = webhook_callback_config()
+    if callback_config:
+        call_payload["callback_config"] = callback_config
     try:
-        call = await hunar_client.create_call(
-            {
-                "agent_id": settings.ATTENDANCE_ESCALATION_AGENT_ID,
-                "callee_name": employee.name,
-                "mobile_number": employee.phone_number,
-                "custom_data": {
-                    "employee_name": employee.name,
-                    "location_name": location.name,
-                    "company": settings.ATTENDANCE_COMPANY_NAME,
-                },
-            }
-        )
-        return call.get("id")
+        call = await hunar_client.create_call(call_payload)
     except HunarAPIError as exc:
         logger.warning("Escalation call failed for employee %s: %s", employee.id, exc.message)
         return None
+
+    call_id = call.get("id")
+    db.add(
+        AttendanceCall(
+            employee_id=employee.id,
+            employee_name=employee.name,
+            location_id=location.id,
+            call_type=AttendanceCallType.ESCALATION,
+            hunar_call_id=call_id,
+            status=call.get("status"),
+        )
+    )
+    await db.commit()
+    return call_id
+
+
+@router.get("/employees/{employee_id}/calls")
+async def list_employee_calls(employee_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Reminder and escalation calls placed to this employee, most recent first — the
+    attendance-side equivalent of a job's screening interview list."""
+    result = await db.execute(
+        select(AttendanceCall)
+        .where(AttendanceCall.employee_id == employee_id)
+        .order_by(AttendanceCall.created_at.desc())
+    )
+    return [_attendance_call_to_dict(c) for c in result.scalars().all()]
+
+
+def _attendance_call_to_dict(call: AttendanceCall) -> dict:
+    return {
+        "id": call.id,
+        "call_type": call.call_type,
+        "status": call.status,
+        "lifecycle_status": call.lifecycle_status,
+        "engagement_status": call.engagement_status,
+        "answered_by": call.answered_by,
+        "duration_seconds": call.duration_seconds,
+        "result": call.result,
+        "recording_url": call.recording_url,
+        "created_at": call.created_at.isoformat() if call.created_at else None,
+    }
 
 
 @router.get("/today")

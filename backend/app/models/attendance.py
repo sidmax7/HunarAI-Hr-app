@@ -1,6 +1,7 @@
+import enum
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Time
+from sqlalchemy import JSON, Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Time
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -51,3 +52,32 @@ class Attendance(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     check_in_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     check_out_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AttendanceCallType(str, enum.Enum):
+    REMINDER = "REMINDER"
+    ESCALATION = "ESCALATION"
+
+
+class AttendanceCall(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """A missed-check-in reminder or CAMARA-verification-failure escalation call placed to
+    an employee. Interview (app.models.interview) is hiring's equivalent of this table —
+    the two are separate because an attendance call has no job/candidate to hang off of,
+    but both are updated by the same Hunar webhook events and rendered by the same
+    CallResultPanel on the frontend."""
+
+    __tablename__ = "attendance_calls"
+
+    employee_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id"))
+    employee_name: Mapped[str] = mapped_column(String(255))
+    location_id: Mapped[str] = mapped_column(String(36), ForeignKey("locations.id"))
+    call_type: Mapped[AttendanceCallType] = mapped_column(Enum(AttendanceCallType))
+    hunar_call_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lifecycle_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    engagement_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    answered_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    call_ended_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    recording_url: Mapped[str | None] = mapped_column(String(512), nullable=True)

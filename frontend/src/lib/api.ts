@@ -72,6 +72,7 @@ export type Interview = {
   candidate: Candidate | null;
   status: string | null;
   lifecycle_status: string | null;
+  engagement_status: string | null;
   result: Record<string, unknown> | null;
   recording_url: string | null;
   duration_seconds: number | null;
@@ -187,6 +188,19 @@ export type AttendanceRecord = {
   verified: boolean;
 };
 
+export type AttendanceCall = {
+  id: string;
+  call_type: "REMINDER" | "ESCALATION";
+  status: string | null;
+  lifecycle_status: string | null;
+  engagement_status: string | null;
+  answered_by: string | null;
+  duration_seconds: number | null;
+  result: Record<string, unknown> | null;
+  recording_url: string | null;
+  created_at: string | null;
+};
+
 export const listLocations = () => request<Location[]>("/api/attendance/locations");
 export const createLocation = (payload: {
   name: string;
@@ -213,6 +227,9 @@ export const createEmployee = (payload: {
 }) => request<Employee>("/api/attendance/employees", { method: "POST", body: JSON.stringify(payload) });
 
 export const todayAttendance = () => request<AttendanceRecord[]>("/api/attendance/today");
+
+export const listEmployeeCalls = (employeeId: string) =>
+  request<AttendanceCall[]>(`/api/attendance/employees/${employeeId}/calls`);
 
 export const telecomVerify = (employeeId: string) =>
   request<{ verified: boolean; camara_result: Record<string, unknown>; escalation_call_id?: string | null }>(

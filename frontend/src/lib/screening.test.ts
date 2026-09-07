@@ -140,6 +140,51 @@ describe("interestTone", () => {
   });
 });
 
+describe("a real captured Full Stack Developer screening result", () => {
+  // Pulled directly from Hunar's own call record for a real completed call
+  // (the "Screener - Full Stack Developer" agent), not a mock.
+  const realResult = {
+    interested: true,
+    notice_period: "forty-five days",
+    salary_expectation: "twenty-five LPA in INR",
+    summary:
+      "The candidate, Raihan, has been working in full-stack development for three years at a startup. He has a notice period of forty-five days and expects a salary of twenty-five LPA, while currently earning eighteen LPA.",
+    years_experience: 3,
+  };
+
+  it("renders the boolean `interested` field as a Yes/No pill", () => {
+    const { fields } = normalizeScreeningResult(realResult);
+    const interested = fields.find((f) => f.key === "interested");
+
+    expect(interested).toEqual({ key: "interested", label: "Interested", value: "Yes", kind: "pill" });
+    expect(interestTone(interested!.value)).toBe("success");
+  });
+
+  it("maps years_experience to a labeled field rather than falling through unmapped", () => {
+    const { fields } = normalizeScreeningResult(realResult);
+    expect(fields.find((f) => f.key === "years_experience")).toEqual({
+      key: "years_experience",
+      label: "Experience",
+      value: "3",
+      kind: "mono",
+    });
+  });
+
+  it("passes the unmapped salary_expectation field through under a humanized label", () => {
+    const { fields } = normalizeScreeningResult(realResult);
+    expect(fields.find((f) => f.key === "salary_expectation")).toEqual({
+      key: "salary_expectation",
+      label: "Salary expectation",
+      value: "twenty-five LPA in INR",
+      kind: "text",
+    });
+  });
+
+  it("extracts the summary", () => {
+    expect(normalizeScreeningResult(realResult).summary).toBe(realResult.summary);
+  });
+});
+
 describe("the live Hiring Screener agent's result schema", () => {
   // The deployed agent returns these keys, which differ from the mock payloads —
   // this pins that a real screening call renders as labeled fields, not raw JSON.

@@ -1,10 +1,10 @@
 """Database-backed tests for the job list/detail endpoints.
 
 These endpoints are what feed the screening-result panel, and they were also
-where two counting bugs lived undetected (candidate_count actually counting
-interviews, and "completed" being read off lifecycle_status, which never holds
-that value). Pure-function tests couldn't catch either, so this module runs the
-real queries against an in-memory SQLite database.
+where a counting bug lived undetected: candidate_count was actually counting
+interviews, so an added-but-unscreened candidate reported zero candidates.
+Pure-function tests couldn't catch it, so this module runs the real queries
+against an in-memory SQLite database.
 """
 
 import pytest
@@ -58,7 +58,8 @@ async def test_get_job_returns_the_structured_screening_result(db):
             job_id=job.id,
             candidate_id=candidate.id,
             status="COMPLETED",
-            lifecycle_status="ENGAGED",
+            lifecycle_status="COMPLETED",
+            engagement_status="ENGAGED",
             result=result_payload,
             recording_url="https://recordings.example/call_1.mp3",
             duration_seconds=224,
@@ -70,11 +71,14 @@ async def test_get_job_returns_the_structured_screening_result(db):
     payload = await get_job(job.id, db)
     interview = payload["interviews"][0]
 
-    # The whole point of the panel: these four have to survive the round trip.
+    # The whole point of the panel: these five have to survive the round trip.
+    # engagement_status is what actually answers "did they engage" — lifecycle_status
+    # only tracks the call attempt (COMPLETED/FAILED/...), never ENGAGED/NOT_ENGAGED.
     assert interview["result"] == result_payload
     assert interview["recording_url"] == "https://recordings.example/call_1.mp3"
     assert interview["duration_seconds"] == 224
     assert interview["answered_by"] == "HUMAN"
+    assert interview["engagement_status"] == "ENGAGED"
 
 
 @pytest.mark.asyncio
@@ -127,7 +131,7 @@ async def test_get_job_keeps_only_the_latest_interview_per_candidate(db):
     db.add_all(
         [
             Interview(job_id=job.id, candidate_id=candidate.id, status="NOT_CONNECTED", created_at=earlier),
-            Interview(job_id=job.id, candidate_id=candidate.id, status="COMPLETED", lifecycle_status="ENGAGED"),
+            Interview(job_id=job.id, candidate_id=candidate.id, status="COMPLETED", lifecycle_status="COMPLETED", engagement_status="ENGAGED"),
         ]
     )
     await db.commit()
@@ -155,15 +159,16 @@ async def test_list_jobs_counts_candidates_not_interviews(db):
 
 @pytest.mark.asyncio
 async def test_list_jobs_counts_completed_from_status_not_lifecycle_status(db):
-    """Regression: completed was read off lifecycle_status, which holds ENGAGED/NOT_ENGAGED."""
+    """"Completed" counts by call status, regardless of whether the candidate engaged —
+    engagement_status is a separate signal and must not gate this count."""
     job = await _job(db)
     engaged = await _candidate(db, job, name="Arjun Nair")
     not_engaged = await _candidate(db, job, name="Fathima Rasheed")
     unreachable = await _candidate(db, job, name="Deepak Yadav")
     db.add_all(
         [
-            Interview(job_id=job.id, candidate_id=engaged.id, status="COMPLETED", lifecycle_status="ENGAGED"),
-            Interview(job_id=job.id, candidate_id=not_engaged.id, status="COMPLETED", lifecycle_status="NOT_ENGAGED"),
+            Interview(job_id=job.id, candidate_id=engaged.id, status="COMPLETED", lifecycle_status="COMPLETED", engagement_status="ENGAGED"),
+            Interview(job_id=job.id, candidate_id=not_engaged.id, status="COMPLETED", lifecycle_status="COMPLETED", engagement_status="NOT_ENGAGED"),
             Interview(job_id=job.id, candidate_id=unreachable.id, status="NOT_CONNECTED"),
         ]
     )

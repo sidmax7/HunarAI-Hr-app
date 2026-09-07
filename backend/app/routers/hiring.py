@@ -7,14 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import get_db
 from app.models.candidate import Candidate, CandidateSource
 from app.models.interview import Interview
 from app.models.job import Job, JobStatus
 from app.models.base import new_uuid
 from app.services.calling_window import calling_window_label, is_within_calling_window
-from app.services.hunar_client import HunarAPIError, hunar_client
+from app.services.hunar_client import HunarAPIError, hunar_client, webhook_callback_config
 from app.services.llm_service import llm_service
 
 router = APIRouter(prefix="/api", tags=["hiring"])
@@ -129,6 +128,7 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)) -> dict:
                 "candidate": _candidate_to_dict(candidate),
                 "status": interview.status if interview else None,
                 "lifecycle_status": interview.lifecycle_status if interview else None,
+                "engagement_status": interview.engagement_status if interview else None,
                 "result": interview.result if interview else None,
                 "recording_url": interview.recording_url if interview else None,
                 "duration_seconds": interview.duration_seconds if interview else None,
@@ -252,10 +252,9 @@ async def screen_candidates(job_id: str, body: ScreenRequest, db: AsyncSession =
             "request_id": request_id,
             "custom_data": _build_custom_data(agent_variables, job, candidate),
         }
-        if _has_public_webhook_url():
-            call_payload["callback_config"] = {
-                "call_summary_callback_url": f"{settings.WEBHOOK_BASE_URL}/api/webhooks/hunar"
-            }
+        callback_config = webhook_callback_config()
+        if callback_config:
+            call_payload["callback_config"] = callback_config
         try:
             call = await hunar_client.create_call(call_payload)
         except HunarAPIError as exc:
@@ -293,6 +292,7 @@ async def get_interview(interview_id: str, db: AsyncSession = Depends(get_db)) -
         "candidate": _candidate_to_dict(candidate) if candidate else None,
         "status": interview.status,
         "lifecycle_status": interview.lifecycle_status,
+        "engagement_status": interview.engagement_status,
         "result": interview.result,
         "recording_url": interview.recording_url,
         "duration_seconds": interview.duration_seconds,
@@ -311,11 +311,6 @@ def normalize_candidate_csv_rows(rows: Iterable[dict]) -> tuple[int, list[dict]]
         if normalized.get("name") and normalized.get("phone"):
             normalized_rows.append(normalized)
     return total_rows, normalized_rows
-
-
-def _has_public_webhook_url() -> bool:
-    url = settings.WEBHOOK_BASE_URL
-    return url.startswith("https://") and "your-public-ip" not in url and "localhost" not in url
 
 
 def _build_custom_data(

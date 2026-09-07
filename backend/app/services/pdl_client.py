@@ -26,6 +26,11 @@ class PDLClient:
                 json=payload,
                 headers={"X-Api-Key": self.api_key, "Content-Type": "application/json"},
             )
+        if response.status_code == 404:
+            data = response.json()
+            if data.get("error", {}).get("type") == "not_found":
+                return {"total": 0, "scroll_token": None, "results": []}
+            raise PDLAPIError(response.status_code, response.text)
         if response.status_code >= 400:
             raise PDLAPIError(response.status_code, response.text)
 

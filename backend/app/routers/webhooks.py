@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models.attendance import AttendanceCall
 from app.models.interview import Interview
 from app.services.webhook_security import verify_hunar_webhook_signature
 
@@ -38,22 +39,29 @@ async def receive_hunar_webhook(request: Request, db: AsyncSession = Depends(get
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing call_id")
 
     result = await db.execute(select(Interview).where(Interview.hunar_call_id == call_id))
-    interview = result.scalar_one_or_none()
+    record: Interview | AttendanceCall | None = result.scalar_one_or_none()
 
-    if interview is None:
+    if record is None:
+        # Not every call this product places is a screening interview — a missed-check-in
+        # reminder or a CAMARA-failure escalation call also gets a hunar_call_id, tracked
+        # in AttendanceCall instead. Same webhook events, different table.
+        result = await db.execute(select(AttendanceCall).where(AttendanceCall.hunar_call_id == call_id))
+        record = result.scalar_one_or_none()
+
+    if record is None:
         logger.warning("Webhook for unknown call_id=%s event=%s", call_id, event_type)
         return {"ok": True, "ignored": True}
 
     if event_type == "call_status_updated":
-        _apply_status_fields(interview, payload)
+        _apply_status_fields(record, payload)
     elif event_type == "call_recording_done":
-        interview.recording_url = payload.get("recording_url")
+        record.recording_url = payload.get("recording_url")
     elif event_type == "call_result_done":
-        interview.result = payload.get("result")
+        record.result = payload.get("result")
     elif event_type == "call_summary":
-        _apply_status_fields(interview, payload)
-        interview.recording_url = payload.get("recording_url") or interview.recording_url
-        interview.result = payload.get("result") or interview.result
+        _apply_status_fields(record, payload)
+        record.recording_url = payload.get("recording_url") or record.recording_url
+        record.result = payload.get("result") or record.result
     else:
         logger.info("Unhandled Hunar event_type=%s for call_id=%s", event_type, call_id)
         return {"ok": True, "ignored": True}
@@ -62,7 +70,7 @@ async def receive_hunar_webhook(request: Request, db: AsyncSession = Depends(get
     return {"ok": True}
 
 
-def _apply_status_fields(interview: Interview, payload: dict) -> None:
+def _apply_status_fields(interview: "Interview | AttendanceCall", payload: dict) -> None:
     new_status = payload.get("status", interview.status)
     # Webhook delivery order isn't guaranteed. Once an interview has reached a terminal
     # status, an out-of-order event carrying an earlier, non-terminal status must not
@@ -77,7 +85,12 @@ def _apply_status_fields(interview: Interview, payload: dict) -> None:
         )
     else:
         interview.status = new_status
+    # `lifecycle_status` tracks the call attempt (NOT_STARTED/IN_PROGRESS/COMPLETED/...),
+    # not whether the candidate engaged — that signal is the separate `engagement_status`
+    # field (ENGAGED/NOT_ENGAGED), which was being silently dropped here despite the model
+    # already having a column for it.
     interview.lifecycle_status = payload.get("lifecycle_status", interview.lifecycle_status)
+    interview.engagement_status = payload.get("engagement_status", interview.engagement_status)
     interview.duration_seconds = payload.get("duration_seconds", interview.duration_seconds)
     interview.answered_by = payload.get("answered_by", interview.answered_by)
     interview.call_ended_by = payload.get("call_ended_by", interview.call_ended_by)

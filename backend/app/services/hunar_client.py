@@ -6,6 +6,23 @@ import httpx
 from app.config import settings
 
 
+def has_public_webhook_url() -> bool:
+    """True when WEBHOOK_BASE_URL is a real, publicly reachable HTTPS host rather than
+    the local-dev default — used to gate every outbound call's callback_config, since
+    handing Hunar an unreachable URL just means its webhook silently never arrives."""
+    url = settings.WEBHOOK_BASE_URL
+    return url.startswith("https://") and "your-public-ip" not in url and "localhost" not in url
+
+
+def webhook_callback_config() -> dict[str, str] | None:
+    """The callback_config block to attach to a create_call payload, or None when no
+    public webhook URL is configured — every call site should use this rather than
+    building the URL itself, so all call types stay wired to the same webhook."""
+    if not has_public_webhook_url():
+        return None
+    return {"call_summary_callback_url": f"{settings.WEBHOOK_BASE_URL}/api/webhooks/hunar"}
+
+
 class HunarAPIError(Exception):
     def __init__(self, status_code: int, message: str, payload: Any = None):
         self.status_code = status_code
